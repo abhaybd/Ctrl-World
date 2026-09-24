@@ -149,6 +149,8 @@ CUDA_VISIBLE_DEVICES=0 uv run scripts/rollout_interact_molmobot_pi0.py --runs ru
 ```
 Checkpoints of the official policies are downloaded to `$OPENPI_DATA_HOME` (default `~/.cache/openpi`), and runs to `--wandb_cache_dir` (default `~/.cache/ctrl_world/wandb_runs`). Both are safe to share between concurrent jobs. A run that fails is skipped, and the script exits with an error listing the failed runs at the end.
 
+Each rollout is logged to wandb in the same format as the real RoboRollout runs: `observations.npz` and `actions.npz` with the same keys (joint positions are the action adapter's predictions), and a `video/<camera>` per camera, at the world model's 5hz and 192x320. It also logs `video/real_vs_wm`, with the real rollout next to the world model's. The real run a rollout starts from is in its config under `source_run` (path, url, start_idx, success). Runs go to `<source entity>/<source project>-wm` by default, use `--wandb_entity`/`--wandb_project` to change that, or `--no_wandb` to only save locally under `--save_dir`. There's no success label, so no `success` in the summary.
+
 Rollouts are 45s by default (57 interactions of 0.8s), use `--interact_num` to change that. Real rollouts that end earlier are padded with their last frame. One interaction takes ~5s on an H100 and ~10s on an A100.
 
 

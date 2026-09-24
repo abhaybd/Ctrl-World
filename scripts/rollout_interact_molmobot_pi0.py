@@ -13,6 +13,9 @@ Runs are passed as a json list, where each entry is either a run path or a dict:
     {"run": "entity/project/run_id", "start_idx": 0, "instruction": "put the banana on the plate"}
 ]
 start_idx (default 0) is the policy step of the real rollout to start from, and instruction defaults to the task of the run.
+
+Each world model rollout is logged to wandb (and saved under save_dir) in the same format as the real rollouts, with
+the real run it started from in its config (source_run).
 """
 import os
 os.environ.setdefault("XLA_PYTHON_CLIENT_PREALLOCATE", "false")  # openpi imports jax, don't let it grab the gpu
@@ -49,6 +52,8 @@ from models.utils import get_fk_solution
 
 # RoboRollout logs the gripper as MolmoSpaces finger joint positions, 0 is open and this is fully closed
 GRIPPER_QPOS_RANGE = 0.824033
+# droid joint velocity is the joint delta from the current position divided by this
+DROID_MAX_JOINT_DELTA = 0.2
 
 
 def load_run_specs(path):
@@ -67,6 +72,10 @@ class WandbEpisode:
     def __init__(self, run_path, cache_dir, wm_cameras=None, policy_exo_camera=None):
         run = wandb.Api().run(run_path)
         self.run_path = "/".join(run.path)
+        self.url = run.url
+        self.name = run.name
+        self.entity, self.project = run.entity, run.project
+        self.tags = list(run.tags)
         self.config = run.config
         self.real_success = run.summary.get("success")
         run_dir = Path(cache_dir) / run.entity / run.project / run.id
@@ -86,6 +95,7 @@ class WandbEpisode:
         # policy_cameras maps policy inputs to robot cameras, e.g. {exo_camera_1: exo_camera_2, wrist_camera: wrist_camera}
         policy_cameras = self.config.get("policy_cameras")
         policy_cameras = policy_cameras if isinstance(policy_cameras, dict) else {}
+        self.policy_cameras = policy_cameras
         self.policy_exo_camera = policy_exo_camera or policy_cameras.get("exo_camera_1")
         self.wrist_camera = policy_cameras.get("wrist_camera", "wrist_camera")
         if self.policy_exo_camera is None:
@@ -300,6 +310,7 @@ class agent():
             'joint_pos': joint_pos[:n_steps],  # (12, 7)
             'joint_vel': joint_vel[:n_steps],  # (12, 7)
             'gripper_pos': gripper_pos[:n_steps],  # (12,)
+            'gripper_cmd': gripper_pos[1:n_steps+1],  # (12,) the gripper command of each step
             'state_fk': state_fk[:n_steps],  # (12, 7)
         }
         return policy_in_out, joint_pos[idx], gripper_pos[idx], state_fk[idx]
@@ -330,7 +341,7 @@ def rollout(Agent, args, spec):
     print("eef pose at t=0", eef0[0], "joint at t=0", joints0, "gripper at t=0", gripper0)
 
     # initialize all history buffer
-    video_to_save, info_to_save = [], []
+    video_to_save, info_to_save, wm_frames = [], [], []
     his_cond, his_joint, his_gripper, his_eef = [], [], [], []
     first_latent = torch.cat([Agent.encode_frames(v[0:1]) for v in video_dict], dim=2)  # (1, 4, 72, 40)
     assert first_latent.shape == (1, 4, 72, 40), f"Expected first_latent shape (1, 4, 72, 40), got {first_latent.shape}"
@@ -372,40 +383,105 @@ def rollout(Agent, args, spec):
         his_eef.append(cartesian_pose[pred_step-1][None,:]) # (1, 7)
         his_cond.append(torch.cat([v[pred_step-1] for v in predict_latents], dim=1).unsqueeze(0))  # (1, 4, 72, 40)
         video_to_save.append(videos_cat[:pred_step-1])
+        wm_frames.append(video_dict_pred[:, :pred_step-1])
         info_to_save.append(policy_in_out)
+    wm_frames.append(video_dict_pred[:, pred_step-1:pred_step])  # the final frame, so there's one per observation like the real videos
 
-    # save rollout video and info
-    print("##########################################################################")
-    video = np.concatenate(video_to_save, axis=0)
-    run_id = episode.run_path.replace('/', '_')
+    # stack the per interaction outputs, at the policy rate
+    traj = {key: np.concatenate([info[key] for info in info_to_save], axis=0) for key in info_to_save[0].keys()}
+    traj['final_joint_pos'], traj['final_gripper_pos'] = his_joint[-1], his_gripper[-1]
+    save_rollout(args, episode, text_i, start_idx_i, traj, np.concatenate(wm_frames, axis=1), np.concatenate(video_to_save, axis=0))
+
+
+def save_rollout(args, episode, text, start_idx, traj, wm_frames, comparison_video):
+    """
+    Save a world model rollout in the same format as the real rollouts logged by RoboRollout (scripts/droid/run_policy.py),
+    locally and to wandb. Joint positions are the action adapter's predictions, videos are at the world model rate (5hz)
+    and resolution (192x320), and there's no success label, wall clock episode length, _rt videos or server timing.
+    """
     policy_name = Path(args.policy.rstrip('/')).name
-    uuid = datetime.datetime.now().strftime("%Y%m%d_%H%M%S")
-    filename_video = f"{args.save_dir}/{args.task_name}/video/{policy_name}_time_{uuid}_run_{run_id}_{start_idx_i}.mp4"
-    os.makedirs(os.path.dirname(filename_video), exist_ok=True)
-    mediapy.write_video(filename_video, video, fps=5)  # world model rate
-    print(f"Saving video to {filename_video}")
-    info = {
-        'run': episode.run_path,
-        'real_success': episode.real_success,
-        'start_idx': start_idx_i,
-        'instructions': text_i,
-        'wm_cameras': episode.wm_cameras,
-        'policy_exo_camera': episode.policy_exo_camera,
-        'policy': args.policy,
-        'policy_skip_step': skip,
+    source_id = episode.run_path.split('/')[-1]
+    timestamp = datetime.datetime.now().strftime("%Y%m%d_%H%M%S")
+    out_dir = Path(args.save_dir) / args.task_name / f"{policy_name}_{source_id}_{start_idx}_{timestamp}"
+    out_dir.mkdir(parents=True, exist_ok=True)
+    policy_dt = episode.config.get("policy_dt", 0.066)
+
+    # observations (T+1) and actions (T) at the policy rate, like the real rollouts
+    joint_pos = np.concatenate([traj['joint_pos'], traj['final_joint_pos'][None]], axis=0)  # (T+1, 7)
+    gripper_pos = np.append(traj['gripper_pos'], traj['final_gripper_pos'])  # (T+1,) 0 is open, 1 is closed
+    ee_fk = [get_fk_solution(q) for q in joint_pos]
+    observations = {
+        "qpos/arm": joint_pos.astype(np.float32),
+        "qpos/gripper": np.repeat(gripper_pos[:, None] * GRIPPER_QPOS_RANGE, 2, axis=1),
+        "ee_pose/pos": np.array([T[:3, 3] for T in ee_fk], dtype=np.float32),
+        "ee_pose/quat": np.array([R.from_matrix(T[:3, :3]).as_quat() for T in ee_fk], dtype=np.float32),  # xyzw, as logged by polymetis
     }
-    for key in info_to_save[0].keys():
-        info[key] = []
-        for i in range(len(info_to_save)):
-            info[key] += info_to_save[i][key].tolist()
-    filename_info = f"{args.save_dir}/{args.task_name}/info/{policy_name}_time_{uuid}_run_{run_id}_{start_idx_i}.json"
-    os.makedirs(os.path.dirname(filename_info), exist_ok=True)
-    with open(filename_info, 'w') as f:
-        json.dump(info, f, indent=4)
-    print(f"Saving trajectory info to {filename_info}")
-    print("##########################################################################")
+    actions = {
+        "arm": (traj['joint_pos'] + traj['joint_vel'] * DROID_MAX_JOINT_DELTA).astype(np.float32),  # the joint target droid commands
+        "gripper": (traj['gripper_cmd'][:, None] * 255.0).astype(np.float32),
+        "arm_vel": traj['joint_vel'].astype(np.float32),
+    }
+    np.savez_compressed(out_dir / "observations.npz", **observations)
+    np.savez_compressed(out_dir / "actions.npz", **actions)
 
+    # one video per camera like the real rollouts, and the real rollout next to the world model
+    for cam, frames in zip(episode.wm_cameras, wm_frames):
+        mediapy.write_video(out_dir / f"{cam}.mp4", frames, fps=5)
+    mediapy.write_video(out_dir / "real_vs_wm.mp4", comparison_video, fps=5)
 
+    n_steps = len(actions["arm"])
+    info = {
+        "episode_length_nominal": n_steps * policy_dt,
+        "episode_length_steps": n_steps,
+        "task": text,
+    }
+    source_run = {
+        "path": episode.run_path,
+        "url": episode.url,
+        "name": episode.name,
+        "start_idx": start_idx,
+        "success": episode.real_success,
+    }
+    config = {
+        "task": text,
+        "robot": {"cameras": episode.config.get("robot", {}).get("cameras")},
+        "policy_dt": policy_dt,
+        "policy_cameras": {**episode.policy_cameras, "exo_camera_1": episode.policy_exo_camera},
+        "policy_metadata": {"model_name": policy_name, "policy": args.policy},
+        "source_run": source_run,
+        "world_model": {
+            "ckpt_path": args.ckpt_path,
+            "svd_model_path": args.svd_model_path,
+            "action_adapter": args.action_adapter,
+            "wm_cameras": episode.wm_cameras,
+            "interact_num": args.interact_num,
+            "pred_step": args.pred_step,
+            "policy_skip_step": args.policy_skip_step,
+            "num_inference_steps": args.num_inference_steps,
+            "guidance_scale": args.guidance_scale,
+            "fps": 5,
+        },
+    }
+    (out_dir / "info.json").write_text(json.dumps({**info, "config": config}, indent=2, default=str))
+    print(f"Saved rollout to {out_dir}")
+
+    if args.no_wandb:
+        return
+    with wandb.init(
+        entity=args.wandb_entity or episode.entity,
+        project=args.wandb_project or f"{episode.project}-wm",
+        name=f"wm_{policy_name}",
+        dir=str(out_dir),
+        tags=["world_model", *episode.tags],
+        config=config,
+        notes=text,
+    ) as run:
+        videos = {f"video/{cam}": wandb.Video(str(out_dir / f"{cam}.mp4"), caption=cam, format="mp4") for cam in episode.wm_cameras}
+        videos["video/real_vs_wm"] = wandb.Video(str(out_dir / "real_vs_wm.mp4"), caption="real (left) vs world model (right)", format="mp4")
+        run.summary.update({**info, **videos})
+        for name in ["observations.npz", "actions.npz", "info.json"]:
+            run.save(str(out_dir / name), base_path=str(out_dir), policy="now")
+        print(f"Logged rollout to {run.url}")
 
 if __name__ == "__main__":
     from config import wm_args
@@ -424,6 +500,9 @@ if __name__ == "__main__":
     parser.add_argument('--policy_skip_step', type=int, default=None)
     parser.add_argument('--wandb_cache_dir', type=str, default=os.path.expanduser('~/.cache/ctrl_world/wandb_runs'))
     parser.add_argument('--save_dir', type=str, default=None)
+    parser.add_argument('--wandb_entity', type=str, default=None, help='entity to log rollouts to, defaults to the source run\'s')
+    parser.add_argument('--wandb_project', type=str, default=None, help='project to log rollouts to, defaults to <source run project>-wm')
+    parser.add_argument('--no_wandb', action='store_true', help='only save rollouts locally')
     args_new = parser.parse_args()
 
     args = wm_args(task_type='molmobot_pi0')
