@@ -511,7 +511,9 @@ def save_rollout(args, episode, text, start_idx, traj, wm_frames, comparison_vid
     ) as run:
         videos = {f"video/{cam}": wandb.Video(str(out_dir / f"{cam}.mp4"), caption=cam, format="mp4") for cam in episode.wm_cameras}
         videos["video/real_vs_wm"] = wandb.Video(str(out_dir / "real_vs_wm.mp4"), caption="real (left) vs world model (right)", format="mp4")
-        run.summary.update({**info, **videos})
+        # videos go through run.log like the real rollouts, media panels don't show media that's only in the summary
+        run.log(videos)
+        run.summary.update(info)
         for name in ["observations.npz", "actions.npz", "info.json"]:
             run.save(str(out_dir / name), base_path=str(out_dir), policy="now")
         print(f"Logged rollout to {run.url}")
