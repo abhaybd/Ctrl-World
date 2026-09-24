@@ -123,6 +123,35 @@ CUDA_VISIBLE_DEVICES=0 XLA_PYTHON_CLIENT_MEM_FRACTION=0.4 python scripts/rollout
 
 
 
+### 📊 (4) Interact with pi0/pi0.5/pi0-FAST within world model, from real rollouts logged to wandb
+**Task Description:** Policy-in-the-loop rollouts starting from the initial frames (both exo cameras and the wrist camera), joint state and instruction of real robot rollouts logged to wandb by RoboRollout. Policies are loaded and served through the [MolmoBot-Pi0](https://github.com/abhaybd/MolmoBot/tree/main/MolmoBot-Pi0) codebase, for consistency with real evals. Only the exo camera in the run's `policy_cameras/exo_camera_1` config is passed to the policy. The real rollout is shown next to the world model rollout in the saved videos.
+
+Supported policies are the official openpi `pi0_droid`, `pi05_droid` and `pi0_fast_droid` models, and other joint velocity checkpoints trained with MolmoBot-Pi0. Their actions go through the same action adapter as (3). Joint position policies like MolmoBot-Pi0-DROID aren't supported yet, see [docs/joint_position_policies.md](docs/joint_position_policies.md).
+
+Dependencies, including MolmoBot-Pi0 (from git), are in `pyproject.toml` and installed with [uv](https://docs.astral.sh/uv/):
+```bash
+uv sync --extra molmobot
+# only needed for pytorch policy checkpoints (the official droid models run in jax): install openpi's transformers overrides
+uv run python -c "import shutil, pathlib, transformers, openpi.models_pytorch.transformers_replace as r; shutil.copytree(pathlib.Path(r.__path__[0]), pathlib.Path(transformers.__path__[0]), dirs_exist_ok=True)"
+```
+torch is installed from the CUDA 12.8 index, which needs NVIDIA driver >= 570.
+
+List the wandb runs in a json file, each entry is either a run path or a dict with an optional `start_idx` (policy step to start from, default 0) and `instruction` (defaults to the run's task):
+```json
+[
+    "entity/project/run_id",
+    {"run": "entity/project/run_id", "start_idx": 30, "instruction": "put the banana on the plate"}
+]
+```
+
+```bash
+CUDA_VISIBLE_DEVICES=0 uv run scripts/rollout_interact_molmobot_pi0.py --runs runs.json --svd_model_path ${path to svd folder} --clip_model_path ${path to clip folder} --ckpt_path ${path to ctrl-world ckpt} --policy pi05_droid
+```
+Checkpoints of the official policies are downloaded to `$OPENPI_DATA_HOME` (default `~/.cache/openpi`), and runs to `--wandb_cache_dir` (default `~/.cache/ctrl_world/wandb_runs`). Both are safe to share between concurrent jobs. A run that fails is skipped, and the script exits with an error listing the failed runs at the end.
+
+Rollouts are 45s by default (57 interactions of 0.8s), use `--interact_num` to change that. Real rollouts that end earlier are padded with their last frame. One interaction takes ~5s on an H100 and ~10s on an A100.
+
+
 ## Pre-Training/Post-training Ctrl-World 📊
 
 In this section, we provide detailed instructions on how to train Ctrl-World on DROID dataset. If you want to train with custum datasets, you can also follow this instructions with neccesary modifications.

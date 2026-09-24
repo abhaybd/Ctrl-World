@@ -73,7 +73,7 @@ class wm_args:
     ########################### rollout args ############################
     # policy
     task_type: str = "pickplace" # choose from ['pickplace', 'towel_fold', 'wipe_table', 'tissue', 'close_laptop','tissue','drawer','stack']
-    gripper_max_dict = {'replay':1.0, 'pickplace':0.75, 'towel_fold':0.95, 'wipe_table':0.95, 'tissue':0.97, 'close_laptop':0.95,'drawer':0.6,'stack':0.75,}
+    gripper_max_dict = {'replay':1.0, 'pickplace':0.75, 'towel_fold':0.95, 'wipe_table':0.95, 'tissue':0.97, 'close_laptop':0.95,'drawer':0.6,'stack':0.75,'molmobot_pi0':1.0,}
     z_min_dict = {'pickplace':0.23}
     ##############################################################################
     policy_type = 'pi05' # choose from ['pi05', 'pi0', 'pi0fast']
@@ -222,6 +222,12 @@ class wm_args:
             self.start_idx = [10]*len(self.val_id)
             self.instruction = ['pick up the sponge and place in the drawer', 'pick up the sponge and place in the drawer', 'pick up the sponge and place in the drawer', 'pick up the sponge and place in the drawer', 'pick up the sponge and place in the drawer']
             self.policy_skip_step = 3
-        
+
+        elif self.task_type == "molmobot_pi0":
+            # initial conditions come from wandb runs, see scripts/rollout_interact_molmobot_pi0.py
+            self.task_name = "Rollouts_interact_molmobot_pi0"
+            self.interact_num = 57 # 45s rollouts, each interaction is 4 world model frames of 3 policy steps (0.066s)
+            self.policy_skip_step = 3 # policies run at ~15hz, 3 policy steps per world model frame (5hz)
+
         else:
             raise ValueError(f"Unknown task type: {self.task_type}")

@@ -1,0 +1,48 @@
+[project]
+name = "ctrl-world"
+version = "0.1.0"
+description = "Ctrl-World: a controllable generative world model for robot manipulation"
+readme = "readme.md"
+requires-python = "~=3.11.0"
+dependencies = [
+    "diffusers==0.34.0",
+    "transformers==4.53.2",  # 4.53.2 is required by openpi
+    "torch==2.7.1",
+    "torchvision==0.22.1",  # listed so it comes from the same index as torch
+    "mediapy",
+    "wandb",
+    "swanlab",
+    "accelerate",
+    "tqdm",
+    "numpy",
+    "decord",
+    "einops",
+    "scipy",
+    "pandas",
+]
+
+[project.optional-dependencies]
+# Policy-in-the-loop rollouts with MolmoBot-Pi0 (scripts/rollout_interact_molmobot_pi0.py)
+molmobot = [
+    "molmobot-pi0[eval] @ git+https://github.com/abhaybd/MolmoBot.git@1e429e6e0a7659a67b961b28860ae3e91b6ba0a4#subdirectory=MolmoBot-Pi0",
+]
+
+[tool.uv]
+package = false
+# Mirrors MolmoBot-Pi0's overrides; openpi pins numpy<2 but works fine with numpy 2.
+override-dependencies = [
+    "jax[cuda12]==0.5.3; sys_platform == 'linux'",
+    "jax==0.5.3; sys_platform == 'darwin'",
+    "numpy>2.0.0,<2.4.0",
+    "evdev; sys_platform == 'never'",
+]
+
+# cu128 builds, the default pypi wheels don't support blackwell (sm_120) gpus
+[tool.uv.sources]
+torch = { index = "pytorch-cu128", marker = "sys_platform == 'linux'" }
+torchvision = { index = "pytorch-cu128", marker = "sys_platform == 'linux'" }
+
+[[tool.uv.index]]
+name = "pytorch-cu128"
+url = "https://download.pytorch.org/whl/cu128"
+explicit = true
