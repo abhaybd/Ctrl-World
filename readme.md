@@ -150,9 +150,26 @@ CUDA_VISIBLE_DEVICES=0 uv run scripts/rollout_interact_molmobot_pi0.py --runs en
 `--ckpt_path` defaults to the official Ctrl-World checkpoint (downloaded from huggingface), pass a local `.pt` or `hf://<repo_id>/<filename>` to use another one, e.g. a post-trained one. If it was trained with different state normalization stats, pass them with `--data_stat_path`.
 Checkpoints of the official policies are downloaded to `$OPENPI_DATA_HOME` (default `~/.cache/openpi`), and runs to `--wandb_cache_dir` (default `~/.cache/ctrl_world/wandb_runs`). Both are safe to share between concurrent jobs. A run that fails is skipped, and the script exits with an error listing the failed runs at the end.
 
-Each rollout is logged to wandb in the same format as the real RoboRollout runs: `observations.npz` and `actions.npz` with the same keys (joint positions are the action adapter's predictions), and a `video/<camera>` per camera, at the world model's 5hz and 192x320. It also logs `video/real_vs_wm`, with the real rollout next to the world model's. The real run a rollout starts from is in its config under `source_run` (path, url, start_idx, success). Runs go to `<source entity>/<source project>-wm` by default, use `--wandb_entity`/`--wandb_project` to change that, or `--no_wandb` to only save locally under `--save_dir`. There's no success label, so no `success` in the summary.
+Each rollout is logged to wandb in the same format as the real RoboRollout runs: `observations.npz` and `actions.npz` with the same keys (joint positions are the action adapter's predictions), and a `video/<camera>` per camera, at the world model's 5hz and 192x320. It also logs `video/real_vs_wm`, with the real rollout next to the world model's. The real run a rollout starts from is in its config under `source_run` (path, url, start_idx, success). Runs go to `<source entity>/<source project>-wm` by default, use `--wandb_entity`/`--wandb_project` to change that, or `--no_wandb` to only save locally under `--save_dir`. There's no success label, so no `success` in the summary, label them by hand with the web interface below.
 
 Rollouts are 45s by default (57 interactions of 0.8s), use `--interact_num` to change that. Real rollouts that end earlier are padded with their last frame. One interaction takes ~5s on an H100 and ~10s on an A100.
+
+
+### 📊 (5) Label world model rollouts as success or failure
+**Task Description:** A web interface to label the rollouts from (4) by hand. It shows a random unlabeled rollout (no `success`/`success_rate` in its summary) with its task and the cameras side by side in one video, so they play and scrub in sync. `video/real_vs_wm` is left out since it gives away the real outcome. The policy and world model (synthwm or ctrl-world, from the checkpoint path) are hidden so labels are blind, "Reveal policy and world model" shows them and the run id for debugging. Success (`s`) or failure (`f`) sets `success` and `success_rate` in the run's summary like the real runs and loads the next one, until none are left.
+
+Install and set up (no GPU needed). The dependencies (flask, wandb, mediapy) are in the base `pyproject.toml`, mediapy needs `ffmpeg` on the `PATH`, and your wandb account needs write access to the project:
+```bash
+uv sync
+sudo apt install ffmpeg  # if it isn't installed already
+uv run wandb login
+```
+
+Run it, then open http://localhost:8000:
+```bash
+uv run scripts/label_wm_rollouts.py --project adeshpande-princeton-university/synthetic-wm-evals-wm
+```
+On a remote machine, forward the port with `ssh -L 8000:localhost:8000 <host>`, or pass `--host 0.0.0.0` to serve on all interfaces (there's no auth, so only on a trusted network). `--port` changes the port, and videos are cached in `--cache_dir` (default `~/.cache/ctrl_world/label_videos`). Several people can label at once with their own servers, rollouts are picked at random so they rarely get the same one.
 
 
 ## Pre-Training/Post-training Ctrl-World 📊
