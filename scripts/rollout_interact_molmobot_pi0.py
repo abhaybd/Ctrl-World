@@ -7,7 +7,8 @@ Initial conditions (a frame from every camera, the robot joint state and the ins
 real robot evals logged to wandb by RoboRollout (scripts/droid/run_policy.py). The real rollout is shown
 next to the world model rollout in the saved videos.
 
-Runs are passed as a json list, where each entry is either a run path or a dict:
+Runs are passed as a run path (entity/project/run_id, or its wandb url), a comma separated list of them, or a json
+file with a list, where each entry is either a run path or a dict:
 [
     "entity/project/run_id",
     {"run": "entity/project/run_id", "start_idx": 0, "instruction": "put the banana on the plate"}
@@ -56,11 +57,27 @@ GRIPPER_QPOS_RANGE = 0.824033
 DROID_MAX_JOINT_DELTA = 0.2
 
 
-def load_run_specs(path):
-    with open(path) as f:
-        specs = json.load(f)
+def normalize_run_path(run):
+    # https://wandb.ai/<entity>/<project>/runs/<run_id>[/overview][?...] -> <entity>/<project>/<run_id>
+    run = run.strip().split("?")[0].removeprefix("https://").removeprefix("wandb.ai/").strip("/")
+    parts = run.split("/")
+    if len(parts) >= 4 and parts[2] == "runs":
+        parts = [parts[0], parts[1], parts[3]]
+    if len(parts) != 3 or "runs" in parts:
+        raise ValueError(f"Expected a wandb run path entity/project/run_id or its url, got {run}")
+    return "/".join(parts)
+
+
+def load_run_specs(runs):
+    # a json file, or a comma separated list of run paths
+    if os.path.isfile(runs):
+        with open(runs) as f:
+            specs = json.load(f)
+    else:
+        specs = [r for r in runs.split(",") if r.strip()]
     specs = [{"run": s} if isinstance(s, str) else dict(s) for s in specs]
     for s in specs:
+        s["run"] = normalize_run_path(s["run"])
         s.setdefault("start_idx", 0)
         s.setdefault("instruction", None)
     return specs
@@ -496,7 +513,7 @@ if __name__ == "__main__":
     from config import wm_args
     from argparse import ArgumentParser
     parser = ArgumentParser()
-    parser.add_argument('--runs', type=str, required=True, help='json list of wandb runs to take initial conditions from')
+    parser.add_argument('--runs', type=str, required=True, help='wandb runs to take initial conditions from: a run path or url, a comma separated list of them, or a json file')
     parser.add_argument('--svd_model_path', type=str, default=None)
     parser.add_argument('--clip_model_path', type=str, default=None)
     parser.add_argument('--ckpt_path', type=str, default='hf://yjguo/Ctrl-World/checkpoint-10000.pt', help='ctrl-world checkpoint, a local .pt or hf://<repo_id>/<filename>, defaults to the official one')

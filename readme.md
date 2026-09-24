@@ -136,7 +136,7 @@ uv run python -c "import shutil, pathlib, transformers, openpi.models_pytorch.tr
 ```
 torch is installed from the CUDA 12.8 index, which needs NVIDIA driver >= 570.
 
-List the wandb runs in a json file, each entry is either a run path or a dict with an optional `start_idx` (policy step to start from, default 0) and `instruction` (defaults to the run's task):
+`--runs` takes a wandb run path (`entity/project/run_id`) or url, or a comma separated list of them, e.g. `--runs entity/project/abc123,entity/project/def456`. To set per-run options, pass a json file instead, where each entry is either a run path or a dict with an optional `start_idx` (policy step to start from, default 0) and `instruction` (defaults to the run's task):
 ```json
 [
     "entity/project/run_id",
@@ -145,7 +145,7 @@ List the wandb runs in a json file, each entry is either a run path or a dict wi
 ```
 
 ```bash
-CUDA_VISIBLE_DEVICES=0 uv run scripts/rollout_interact_molmobot_pi0.py --runs runs.json --svd_model_path ${path to svd folder} --clip_model_path ${path to clip folder} --policy pi05_droid
+CUDA_VISIBLE_DEVICES=0 uv run scripts/rollout_interact_molmobot_pi0.py --runs entity/project/run_id --svd_model_path ${path to svd folder} --clip_model_path ${path to clip folder} --policy pi05_droid
 ```
 `--ckpt_path` defaults to the official Ctrl-World checkpoint (downloaded from huggingface), pass a local `.pt` or `hf://<repo_id>/<filename>` to use another one, e.g. a post-trained one. If it was trained with different state normalization stats, pass them with `--data_stat_path`.
 Checkpoints of the official policies are downloaded to `$OPENPI_DATA_HOME` (default `~/.cache/openpi`), and runs to `--wandb_cache_dir` (default `~/.cache/ctrl_world/wandb_runs`). Both are safe to share between concurrent jobs. A run that fails is skipped, and the script exits with an error listing the failed runs at the end.
