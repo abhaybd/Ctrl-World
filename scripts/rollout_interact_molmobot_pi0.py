@@ -100,6 +100,13 @@ class WandbEpisode:
 
         # videos logged without the _rt suffix have one frame per policy step, aligned with the observations
         video_paths = {key.removeprefix("video/"): val["path"] for key, val in run.summary.items() if key.startswith("video/") and not key.endswith("_rt")}
+        if not video_paths:
+            # the summary can be overwritten, find the logged videos (media/videos/video/<cam>_<step>_<hash>.mp4) in the run files
+            for f in run.files():
+                if f.name.startswith("media/videos/video/") and f.name.endswith(".mp4"):
+                    cam = f.name.removeprefix("media/videos/video/").rsplit("_", 2)[0]
+                    if not cam.endswith("_rt"):
+                        video_paths[cam] = f.name
         with FileLock(run_dir / ".lock"):  # jobs sharing the cache can download the same run concurrently
             for path in ["observations.npz", *video_paths.values()]:
                 run.file(path).download(root=run_dir, exist_ok=True)
