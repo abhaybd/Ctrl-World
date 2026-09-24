@@ -36,7 +36,7 @@ import wandb
 from accelerate import Accelerator
 from decord import VideoReader, cpu
 from filelock import FileLock
-from huggingface_hub import snapshot_download
+from huggingface_hub import hf_hub_download, snapshot_download
 from scipy.spatial.transform import Rotation as R
 
 import einops
@@ -161,6 +161,14 @@ def load_policy(policy, device_id, compile_mode):
     return policy
 
 
+def resolve_ckpt(ckpt_path):
+    # a local file, or hf://<repo_id>/<filename>
+    if ckpt_path.startswith("hf://"):
+        repo_id, filename = ckpt_path.removeprefix("hf://").rsplit("/", 1)
+        return hf_hub_download(repo_id, filename)
+    return ckpt_path
+
+
 def droid_scale_vel(joint_vel):
     # droid scales joint velocities down to at most 1 per joint, see joint_velocity_to_delta in droid/robot_ik/robot_ik_solver.py
     return joint_vel / np.maximum(np.max(np.abs(joint_vel), axis=-1, keepdims=True), 1.0)
@@ -185,7 +193,7 @@ def joints_to_eef(joint_pos, gripper_pos):
 
 class agent():
     def __init__(self, args):
-        args.val_model_path = args.ckpt_path
+        args.val_model_path = resolve_ckpt(args.ckpt_path)
         self.args = args
         self.accelerator = Accelerator()
         self.device = self.accelerator.device
@@ -451,6 +459,7 @@ def save_rollout(args, episode, text, start_idx, traj, wm_frames, comparison_vid
         "source_run": source_run,
         "world_model": {
             "ckpt_path": args.ckpt_path,
+            "data_stat_path": args.data_stat_path,
             "svd_model_path": args.svd_model_path,
             "action_adapter": args.action_adapter,
             "wm_cameras": episode.wm_cameras,
@@ -490,7 +499,8 @@ if __name__ == "__main__":
     parser.add_argument('--runs', type=str, required=True, help='json list of wandb runs to take initial conditions from')
     parser.add_argument('--svd_model_path', type=str, default=None)
     parser.add_argument('--clip_model_path', type=str, default=None)
-    parser.add_argument('--ckpt_path', type=str, default=None)
+    parser.add_argument('--ckpt_path', type=str, default='hf://yjguo/Ctrl-World/checkpoint-10000.pt', help='ctrl-world checkpoint, a local .pt or hf://<repo_id>/<filename>, defaults to the official one')
+    parser.add_argument('--data_stat_path', type=str, default=None, help='state normalization stats the checkpoint was trained with, defaults to droid\'s')
     parser.add_argument('--policy', type=str, default='pi05_droid', help='pi0_droid, pi05_droid, pi0_fast_droid, or a joint velocity checkpoint as a local dir or hf://<repo_id>')
     parser.add_argument('--policy_compile_mode', type=str, default=None, help='torch.compile mode for the policy, not compiled by default')
     parser.add_argument('--policy_exo_camera', type=str, default=None, help='override policy_cameras/exo_camera_1 from the run config')
@@ -528,4 +538,4 @@ if __name__ == "__main__":
     if failed:
         raise RuntimeError(f"Rollouts failed for runs: {failed}")
 
-# CUDA_VISIBLE_DEVICES=0 python scripts/rollout_interact_molmobot_pi0.py --runs runs.json --svd_model_path ${svd} --clip_model_path ${clip} --ckpt_path ${ctrl-world ckpt} --policy pi05_droid
+# CUDA_VISIBLE_DEVICES=0 python scripts/rollout_interact_molmobot_pi0.py --runs runs.json --svd_model_path ${svd} --clip_model_path ${clip} --policy pi05_droid

@@ -145,8 +145,9 @@ List the wandb runs in a json file, each entry is either a run path or a dict wi
 ```
 
 ```bash
-CUDA_VISIBLE_DEVICES=0 uv run scripts/rollout_interact_molmobot_pi0.py --runs runs.json --svd_model_path ${path to svd folder} --clip_model_path ${path to clip folder} --ckpt_path ${path to ctrl-world ckpt} --policy pi05_droid
+CUDA_VISIBLE_DEVICES=0 uv run scripts/rollout_interact_molmobot_pi0.py --runs runs.json --svd_model_path ${path to svd folder} --clip_model_path ${path to clip folder} --policy pi05_droid
 ```
+`--ckpt_path` defaults to the official Ctrl-World checkpoint (downloaded from huggingface), pass a local `.pt` or `hf://<repo_id>/<filename>` to use another one, e.g. a post-trained one. If it was trained with different state normalization stats, pass them with `--data_stat_path`.
 Checkpoints of the official policies are downloaded to `$OPENPI_DATA_HOME` (default `~/.cache/openpi`), and runs to `--wandb_cache_dir` (default `~/.cache/ctrl_world/wandb_runs`). Both are safe to share between concurrent jobs. A run that fails is skipped, and the script exits with an error listing the failed runs at the end.
 
 Each rollout is logged to wandb in the same format as the real RoboRollout runs: `observations.npz` and `actions.npz` with the same keys (joint positions are the action adapter's predictions), and a `video/<camera>` per camera, at the world model's 5hz and 192x320. It also logs `video/real_vs_wm`, with the real rollout next to the world model's. The real run a rollout starts from is in its config under `source_run` (path, url, start_idx, success). Runs go to `<source entity>/<source project>-wm` by default, use `--wandb_entity`/`--wandb_project` to change that, or `--no_wandb` to only save locally under `--save_dir`. There's no success label, so no `success` in the summary.
